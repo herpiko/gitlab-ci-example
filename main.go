@@ -91,6 +91,8 @@ func main() {
 	http.HandleFunc("/save/", makeHandler(saveHandler))
 	http.HandleFunc("/", indexHandler)
 
+  log.Println("Running on 8080")
+
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 

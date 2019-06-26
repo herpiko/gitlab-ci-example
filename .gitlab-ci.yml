@@ -1,8 +1,12 @@
 variables:
+  ACTION: "DEFAULT"
   IMAGE_TAG: $CI_COMMIT_REF_SLUG
 
 stages:
   - test
+  - image-build
+  - binary-build
+  - deployment
 
 before_script:
   - eval `ssh-agent -s`
@@ -12,7 +16,73 @@ before_script:
 
 test:
   stage: test
+  only: 
+    variables:
+      - $ACTION == "DEFAULT"
+  artifacts:
+    paths:
+    - result.txt
+    expire_in: 1 week
   script:
-    - ls
-    - ls docker/test
-    - make docker-test
+    - make docker-test | tee result.txt
+    - grep -r PASS result.txt
+    - if [[ $(grep -r coverage result.txt | cut -d ' ' -f 2 | cut -d '%' -f 1 | cut -d '.' -f 1) -gt 4 ]]; then exit 0; else exit 1; fi
+
+
+build-docker-image:
+  stage: image-build
+  only: 
+    variables:
+      - $ACTION == "DEFAULT"
+  script:
+    - cp docker/build/Dockerfile .
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build --build-arg PIPELINE_ID=$PIPELINE_ID -t $CI_REGISTRY/herpiko/gitlab-ci-example/gitlab-ci-example:staging-latest .
+    - docker tag $CI_REGISTRY/herpiko/gitlab-ci-example/gitlab-ci-example:staging-latest $CI_REGISTRY/herpiko/gitlab-ci-example/gitlab-ci-example:prod-latest
+    - docker push $CI_REGISTRY/herpiko/gitlab-ci-example/gitlab-ci-example:staging-latest
+    - docker push $CI_REGISTRY/herpiko/gitlab-ci-example/gitlab-ci-example:prod-latest
+
+build-debug:
+  stage: binary-build
+  only: 
+    variables:
+      - $ACTION == "DEFAULT"
+  artifacts:
+    paths:
+    - build/debug/gitlab-ci-example
+    expire_in: 1 week
+  script:
+    - make build-debug
+
+build-release:
+  stage: binary-build
+  only: 
+    variables:
+      - $ACTION == "DEFAULT"
+  artifacts:
+    paths:
+    - build/release/gitlab-ci-example
+    expire_in: 1 week
+  script:
+    - make build-release
+
+deploy-staging:
+  stage: deployment
+  only: 
+    variables:
+      - $ACTION == "DEFAULT"
+  script:
+    - ssh -o stricthostkeychecking=no root@51.158.120.217 "mkdir -p /root/staging"
+    - scp -o stricthostkeychecking=no docker/staging/docker-compose.yml root@51.158.120.217:/root/staging
+    - ssh -o stricthostkeychecking=no root@51.158.120.217 "cd /root/staging && docker-compose up -d"
+
+deploy-prod:
+  stage: deployment
+  only: 
+    variables:
+      - $ACTION == "prod"
+  script:
+    - ssh -o stricthostkeychecking=no root@51.158.120.217 "mkdir -p /root/prod"
+    - scp -o stricthostkeychecking=no docker/prod/docker-compose.yml root@51.158.120.217:/root/prod
+    - ssh -o stricthostkeychecking=no root@51.158.120.217 "cd /root/prod && docker-compose up -d"
+
